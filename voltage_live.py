@@ -190,9 +190,12 @@ def elapsed_values(ts_list):
 
 
 def suptitle_text(ts_list, count, total):
-    elapsed = ts_list[-1] - ts_list[0]
-    hours, remainder = divmod(int(elapsed.total_seconds()), 3600)
-    minutes = remainder // 60
+    if len(ts_list) >= 2:
+        elapsed = ts_list[-1] - ts_list[0]
+        hours, remainder = divmod(int(elapsed.total_seconds()), 3600)
+        minutes = remainder // 60
+    else:
+        hours, minutes = 0, 0
     return f"DC310Pro — {count}/{total} readings, elapsed {hours}h {minutes}m"
 
 
@@ -212,10 +215,10 @@ def update_compressed(frame):
     cs = cs[::THIN_STEP]
     ps = ps[::THIN_STEP]
 
-    if len(ts) < 2:
+    if not ts:
         return
 
-    elapsed_vals, x_label = elapsed_values(ts)
+    elapsed_vals, x_label = elapsed_values(ts) if len(ts) >= 2 else ([0.0] * len(ts), "Elapsed (minutes)")
 
     for ax, data, label, color in [
         (c_ax1, vs, "Voltage (V)", "#2196F3"),
@@ -249,7 +252,7 @@ def update_live(frame):
         cs = list(currents)
         ps = list(powers)
 
-    if len(ts) < 2:
+    if not ts:
         return
 
     # Determine the window boundaries
@@ -257,6 +260,9 @@ def update_live(frame):
     t_last = ts[-1]
     window_elapsed = LIVE_WINDOW.total_seconds()
     total_elapsed = (t_last - t0_all).total_seconds()
+
+    if len(ts) == 1:
+        total_elapsed = 0
 
     if total_elapsed <= window_elapsed:
         # Haven't filled the window yet — show from start, fixed right edge at 2h
@@ -289,7 +295,7 @@ def update_live(frame):
         (l_ax3, ps, "Power (W)", "#4CAF50"),
     ]:
         ax.clear()
-        ax.plot(elapsed_vals, data, color=color, linewidth=1)
+        ax.plot(elapsed_vals, data, color=color, linewidth=1, marker="o", markersize=2)
         ax.set_ylabel(label, fontsize=10)
         ax.grid(True, alpha=0.3)
         ax.set_xlim(x_min, x_max)
