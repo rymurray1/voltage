@@ -1,0 +1,14 @@
+# Virtual environment
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Data logs
+*.jsonl
+
+# IDE
+.vscode/
+.idea/
