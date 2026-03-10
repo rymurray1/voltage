@@ -261,18 +261,9 @@ def update_live(frame):
     window_elapsed = LIVE_WINDOW.total_seconds()
     total_elapsed = (t_last - t0_all).total_seconds()
 
-    if len(ts) == 1:
-        total_elapsed = 0
-
-    if total_elapsed <= window_elapsed:
-        # Haven't filled the window yet — show from start, fixed right edge at 2h
-        x_origin = t0_all
-        x_min = 0.0
-        x_max = window_elapsed / 60  # in minutes
-    else:
-        # Sliding window — show last 2 hours
+    if total_elapsed > window_elapsed:
+        # Sliding window — trim to last 2 hours
         cutoff = t_last - LIVE_WINDOW
-        # Find first index within the window
         idx = 0
         for i, t in enumerate(ts):
             if t >= cutoff:
@@ -282,12 +273,12 @@ def update_live(frame):
         vs = vs[idx:]
         cs = cs[idx:]
         ps = ps[idx:]
-        x_origin = ts[0]
-        x_min = 0.0
-        x_max = window_elapsed / 60
 
-    # Elapsed in minutes from x_origin
+    # X-axis fits tightly to the data, growing rightward
+    x_origin = ts[0]
     elapsed_vals = [(t - x_origin).total_seconds() / 60 for t in ts]
+    x_min = 0.0
+    x_max = elapsed_vals[-1] if len(elapsed_vals) > 1 else 1.0
 
     for ax, data, label, color in [
         (l_ax1, vs, "Voltage (V)", "#2196F3"),
