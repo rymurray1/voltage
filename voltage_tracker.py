@@ -5,9 +5,10 @@ from datetime import datetime
 
 COMPORT = "COM9"
 BAUD_RATE = 115200
-INTERVAL_SECONDS = 5
+INTERVAL_SECONDS = 0.5  # 2 samples per second
 DURATION_SECONDS = 200 * 3600  # 200 hours
-OUTPUT_FILE = "voltage_log.jsonl"
+START_TIME = datetime.now().strftime("%Y%m%d_%H%M%S")
+OUTPUT_FILE = f"{START_TIME}_voltage_log.jsonl"
 
 
 def send_command(ser, cmd):

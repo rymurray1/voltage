@@ -3,7 +3,7 @@ import json
 import time
 import threading
 import tkinter as tk
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -11,10 +11,14 @@ from matplotlib.animation import FuncAnimation
 # ── Config ──
 COMPORT = "COM9"
 BAUD_RATE = 115200
-SAMPLE_INTERVAL = 1 / 3  # ~3 samples per second
+SAMPLE_INTERVAL = 0.5  # 2 samples per second
 DISPLAY_INTERVAL = 10  # print to console every 10 seconds
 DURATION_SECONDS = 200 * 3600  # 200 hours
-OUTPUT_FILE = "voltage_log.jsonl"
+THIN_STEP = 20  # plot 1 out of every 20 samples on compressed chart (= every 10s)
+LIVE_WINDOW = timedelta(hours=2)
+
+START_TIME = datetime.now().strftime("%Y%m%d_%H%M%S")
+OUTPUT_FILE = f"{START_TIME}_voltage_log.jsonl"
 
 # ── Shared state ──
 timestamps = []
@@ -172,8 +176,28 @@ def control_panel_thread():
     root.mainloop()
 
 
-# ── Chart (main thread) ──
-def update(frame):
+# ── Helper: elapsed x-axis values ──
+def elapsed_values(ts_list):
+    """Return (elapsed_vals, x_label) with auto minutes/hours scaling."""
+    t0 = ts_list[0]
+    total_hours = (ts_list[-1] - t0).total_seconds() / 3600
+    if total_hours < 5:
+        vals = [(t - t0).total_seconds() / 60 for t in ts_list]
+        return vals, "Elapsed (minutes)"
+    else:
+        vals = [(t - t0).total_seconds() / 3600 for t in ts_list]
+        return vals, "Elapsed (hours)"
+
+
+def suptitle_text(ts_list, count, total):
+    elapsed = ts_list[-1] - ts_list[0]
+    hours, remainder = divmod(int(elapsed.total_seconds()), 3600)
+    minutes = remainder // 60
+    return f"DC310Pro — {count}/{total} readings, elapsed {hours}h {minutes}m"
+
+
+# ── Compressed chart update (every 20th sample = every 10s) ──
+def update_compressed(frame):
     with data_lock:
         if not timestamps:
             return
@@ -182,30 +206,24 @@ def update(frame):
         cs = list(currents)
         ps = list(powers)
 
-    # Thin to every 10th second (every 30th sample at 3 samples/s)
-    step = int(DISPLAY_INTERVAL * (1 / SAMPLE_INTERVAL))  # 10 * 3 = 30
-    ts = ts[::step]
-    vs = vs[::step]
-    cs = cs[::step]
-    ps = ps[::step]
+    # Thin: keep every THIN_STEP-th sample
+    ts = ts[::THIN_STEP]
+    vs = vs[::THIN_STEP]
+    cs = cs[::THIN_STEP]
+    ps = ps[::THIN_STEP]
 
-    # Convert timestamps to elapsed minutes or hours
-    t0 = ts[0]
-    elapsed_total = (ts[-1] - t0).total_seconds() / 3600
-    if elapsed_total < 5:
-        elapsed_vals = [(t - t0).total_seconds() / 60 for t in ts]
-        x_label = "Elapsed (minutes)"
-    else:
-        elapsed_vals = [(t - t0).total_seconds() / 3600 for t in ts]
-        x_label = "Elapsed (hours)"
+    if len(ts) < 2:
+        return
+
+    elapsed_vals, x_label = elapsed_values(ts)
 
     for ax, data, label, color in [
-        (ax1, vs, "Voltage (V)", "#2196F3"),
-        (ax2, cs, "Current (A)", "#FF9800"),
-        (ax3, ps, "Power (W)", "#4CAF50"),
+        (c_ax1, vs, "Voltage (V)", "#2196F3"),
+        (c_ax2, cs, "Current (A)", "#FF9800"),
+        (c_ax3, ps, "Power (W)", "#4CAF50"),
     ]:
         ax.clear()
-        ax.plot(elapsed_vals, data, color=color, linewidth=1, marker="o", markersize=3)
+        ax.plot(elapsed_vals, data, color=color, linewidth=1)
         ax.set_ylabel(label, fontsize=10)
         ax.grid(True, alpha=0.3)
         ax.text(
@@ -214,14 +232,76 @@ def update(frame):
             fontsize=14, fontweight="bold", color=color,
         )
 
-    ax3.set_xlabel(x_label)
+    c_ax3.set_xlabel(x_label)
+    fig_compressed.suptitle(
+        "Compressed — " + suptitle_text(ts, tracker_status["count"], tracker_status["total"]),
+        fontsize=12,
+    )
 
-    hours, remainder = divmod(int((ts[-1] - t0).total_seconds()), 3600)
-    minutes = remainder // 60
-    count = tracker_status["count"]
-    total = tracker_status["total"]
-    fig.suptitle(
-        f"DC310Pro Live Monitor — {count}/{total} readings, elapsed {hours}h {minutes}m",
+
+# ── Live chart update (all points, 2-hour sliding window) ──
+def update_live(frame):
+    with data_lock:
+        if not timestamps:
+            return
+        ts = list(timestamps)
+        vs = list(voltages)
+        cs = list(currents)
+        ps = list(powers)
+
+    if len(ts) < 2:
+        return
+
+    # Determine the window boundaries
+    t0_all = ts[0]
+    t_last = ts[-1]
+    window_elapsed = LIVE_WINDOW.total_seconds()
+    total_elapsed = (t_last - t0_all).total_seconds()
+
+    if total_elapsed <= window_elapsed:
+        # Haven't filled the window yet — show from start, fixed right edge at 2h
+        x_origin = t0_all
+        x_min = 0.0
+        x_max = window_elapsed / 60  # in minutes
+    else:
+        # Sliding window — show last 2 hours
+        cutoff = t_last - LIVE_WINDOW
+        # Find first index within the window
+        idx = 0
+        for i, t in enumerate(ts):
+            if t >= cutoff:
+                idx = i
+                break
+        ts = ts[idx:]
+        vs = vs[idx:]
+        cs = cs[idx:]
+        ps = ps[idx:]
+        x_origin = ts[0]
+        x_min = 0.0
+        x_max = window_elapsed / 60
+
+    # Elapsed in minutes from x_origin
+    elapsed_vals = [(t - x_origin).total_seconds() / 60 for t in ts]
+
+    for ax, data, label, color in [
+        (l_ax1, vs, "Voltage (V)", "#2196F3"),
+        (l_ax2, cs, "Current (A)", "#FF9800"),
+        (l_ax3, ps, "Power (W)", "#4CAF50"),
+    ]:
+        ax.clear()
+        ax.plot(elapsed_vals, data, color=color, linewidth=1)
+        ax.set_ylabel(label, fontsize=10)
+        ax.grid(True, alpha=0.3)
+        ax.set_xlim(x_min, x_max)
+        ax.text(
+            0.98, 0.95, f"{data[-1]:.3f}",
+            transform=ax.transAxes, ha="right", va="top",
+            fontsize=14, fontweight="bold", color=color,
+        )
+
+    l_ax3.set_xlabel("Elapsed (minutes)")
+    fig_live.suptitle(
+        "Live (2h window) — " + suptitle_text(ts, tracker_status["count"], tracker_status["total"]),
         fontsize=12,
     )
 
@@ -241,11 +321,18 @@ tracker.start()
 control = threading.Thread(target=control_panel_thread, daemon=True)
 control.start()
 
-# Chart in main thread
-fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 7), sharex=True)
-fig.subplots_adjust(hspace=0.15, top=0.92)
+# ── Create two figure windows ──
+# Compressed: full experiment, thinned to every 10s
+fig_compressed, (c_ax1, c_ax2, c_ax3) = plt.subplots(3, 1, figsize=(10, 7), sharex=True, num="Compressed View")
+fig_compressed.subplots_adjust(hspace=0.15, top=0.92)
 
-ani = FuncAnimation(fig, update, interval=DISPLAY_INTERVAL * 1000, cache_frame_data=False)
+# Live: every data point, 2-hour sliding window
+fig_live, (l_ax1, l_ax2, l_ax3) = plt.subplots(3, 1, figsize=(10, 7), sharex=True, num="Live View (2h)")
+fig_live.subplots_adjust(hspace=0.15, top=0.92)
+
+# Compressed updates every 10s, live updates every 500ms
+ani_compressed = FuncAnimation(fig_compressed, update_compressed, interval=10000, cache_frame_data=False)
+ani_live = FuncAnimation(fig_live, update_live, interval=500, cache_frame_data=False)
 
 try:
     plt.show()
