@@ -226,7 +226,7 @@ def update_compressed(frame):
         (c_ax3, ps, "Power (W)", "#4CAF50"),
     ]:
         ax.clear()
-        ax.plot(elapsed_vals, data, color=color, linewidth=1)
+        ax.plot(elapsed_vals, data, color=color, linewidth=1, marker="o", markersize=3)
         ax.set_ylabel(label, fontsize=10)
         ax.grid(True, alpha=0.3)
         ax.text(
@@ -286,7 +286,8 @@ def update_live(frame):
         (l_ax3, ps, "Power (W)", "#4CAF50"),
     ]:
         ax.clear()
-        ax.plot(elapsed_vals, data, color=color, linewidth=1, marker="o", markersize=2)
+        ax.plot(elapsed_vals, data, color=color, linewidth=1)
+        ax.plot(elapsed_vals[-1], data[-1], color=color, marker="o", markersize=5)
         ax.set_ylabel(label, fontsize=10)
         ax.grid(True, alpha=0.3)
         ax.set_xlim(x_min, x_max)
